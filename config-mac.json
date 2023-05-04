@@ -1,0 +1,20 @@
+{
+  "platform": "mac",
+  "jdk": "./OpenJDK17U-jre_x64_mac_hotspot_17.0.5_8.tar.gz",
+  "executable": "spotifyDisplay",
+  "classpath": [
+    "./build/libs/spotifyDisplay-1.0-SNAPSHOT-all.jar"
+  ],
+  "removelibs": [
+    "spotifyDisplay-1.0-SNAPSHOT-all.jar"
+  ],
+  "mainclass": "me.alien.Main",
+  "vmargs": [
+    "Xmx1G"
+  ],
+  "resources": [
+    "src/main/resources"
+  ],
+  "minimizejre": "soft",
+  "output": "mac.app"
+}

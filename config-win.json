@@ -1,0 +1,12 @@
+{
+    "jdk": "./OpenJDK17U-jre_x64_windows_hotspot_17.0.5_8.zip",
+    "output": "win",
+    "mainclass": "me.zacharias.spotify.display.Main",
+    "minimizejre": "soft",
+    "classpath": ["./build/libs/spotifyDisplay-1.0-SNAPSHOT-all.jar"],
+    "removelibs": ["spotifyDisplay-1.0-SNAPSHOT-all.jar"],
+    "resources": ["src/main/resources"],
+    "vmargs": ["Xmx1G"],
+    "platform": "windows64",
+    "executable": "spotifyDisplay"
+}
