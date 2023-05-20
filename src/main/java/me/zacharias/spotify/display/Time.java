@@ -49,7 +49,7 @@ public class Time {
     }
 
     public long getTimeInMilliseconds() {
-        return ms + (sec * 1000) + (min * 60 * 1000) + (hr * 60 * 60 * 1000);
+        return ms + (sec * 1000L) + ((long) min * 60 * 1000) + ((long) hr * 60 * 60 * 1000);
     }
 
     public int getTimeInMinutes() {

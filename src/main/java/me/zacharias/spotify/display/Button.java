@@ -21,6 +21,10 @@ public class Button {
         depressedIcon = LoadImage.getGrayScaleImageFromResources(iconName+"Off.bin");
     }
 
+    public void addHoverEventHandler(){
+
+    }
+
     public void press(Point p){
         if(buttonBox.contains(p)){
             pressed = true;
@@ -44,4 +48,6 @@ public class Button {
             PaintUtil.drawScaleBitMap(g,depressedIcon, buttonBox.x, buttonBox.y, c);
         }
     }
+
+
 }

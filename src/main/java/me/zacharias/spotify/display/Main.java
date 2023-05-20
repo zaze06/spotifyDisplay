@@ -6,7 +6,6 @@ import org.json.JSONObject;
 import se.michaelthelin.spotify.SpotifyApi;
 import se.michaelthelin.spotify.exceptions.SpotifyWebApiException;
 import se.michaelthelin.spotify.model_objects.credentials.AuthorizationCodeCredentials;
-import se.michaelthelin.spotify.model_objects.miscellaneous.CurrentlyPlaying;
 import se.michaelthelin.spotify.requests.authorization.authorization_code.AuthorizationCodeRefreshRequest;
 import se.michaelthelin.spotify.requests.authorization.authorization_code.AuthorizationCodeRequest;
 import se.michaelthelin.spotify.requests.data.player.GetUsersCurrentlyPlayingTrackRequest;
@@ -54,6 +53,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
     private Rectangle cacheIconsSwitch;
     private Rectangle fadeIconSwitch;
     private Button cacheClearButton;
+    private Button cacheFileButton;
     private TextBox fadeStartTime;
     private TextBox fadeCompleteTime;
     private TextBox selectedTextBox;
@@ -70,6 +70,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
     private boolean alwaysOnTop = false;
     private boolean cacheIcons = false;
     private boolean fadeIcon = false;
+    private static boolean devMode = false;
     private GetUsersCurrentlyPlayingTrackRequest item = null;
     private final JFrame frame = new JFrame();
 
@@ -126,9 +127,13 @@ public class Main extends JPanel implements MouseListener, KeyListener {
                     }
                     if (System.currentTimeMillis() > 0) {
                         currentPlayingJson = new JSONObject(item.getJson());
-                        if (!oldSong.equals(currentPlayingJson.getJSONObject("item").getString("uri"))) {
-                            oldSong = currentPlayingJson.getJSONObject("item").getString("uri");
-                            newSong();
+                        if(!currentPlayingJson.isNull("item")) {
+                            if (!oldSong.equals(currentPlayingJson.getJSONObject("item").getString("uri"))) {
+                                oldSong = currentPlayingJson.getJSONObject("item").getString("uri");
+                                newSong();
+                            }
+                        }else{
+                            icon = iconNotFound;
                         }
                     }
                 } catch (Exception e) {
@@ -189,25 +194,34 @@ public class Main extends JPanel implements MouseListener, KeyListener {
     };
     private Thread t = new Thread(spotifyListening);
     private static BufferedImage offlineIcon = null;
+    private static BufferedImage iconNotFound = null;
     private final BufferedImage onSetting = LoadImage.getImageFromResources("on.png");
     private final BufferedImage offSetting = LoadImage.getImageFromResources("off.png");
     private BufferedImage[] icons = new BufferedImage[3];
     private BufferedImage icon = null;
     private BufferedImage drawFrame;
-    private final File iconCatch;
+    private File cacheFolder;
     private final File configFile;
     private final JSONObject config;
     private SizeMode sizeMode = SizeMode.NORMAL;
     private Font size20Font;
     private Clock clock = new Clock();
+    private static Time baseTime = new Time();
 
     public static void main(String[] args) throws IOException {
-        if(args.length > 0) {
-            if (args[0].equalsIgnoreCase("offline")) {
-                online = false;
-                offlineIcon = ImageIO.read(new File("./example.jpg"));
-            }
+        ArrayList<String> argsList = new ArrayList<>(Arrays.stream(args).toList());
+
+        if (argsList.contains("offline")) {
+            online = false;
+            offlineIcon = ImageIO.read(new File("./example.jpg"));
         }
+        if(argsList.contains("-dev")){
+            devMode = true;
+        }
+
+        iconNotFound = ImageIO.read(Main.class.getResourceAsStream("/iconNotFound.png"));
+        baseTime.setMin(20);
+
         try {
             new Main();
         } catch (Exception e) {
@@ -282,13 +296,16 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             dataFolder = new File(System.getenv("APPDATA")+"/spotifyDisplay");
         }
 
+        if(devMode){
+            dataFolder = new File("./data");
+        }
+
         System.out.println("dataFolder: "+dataFolder.getAbsolutePath());
 
         if(!dataFolder.exists()){
             dataFolder.mkdir();
         }
 
-        iconCatch = new File(dataFolder,"catch");
         configFile = new File(dataFolder,"config.json");
 
         // Inizelise display window
@@ -300,7 +317,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
         frame.addMouseListener(this);
         frame.addKeyListener(this);
         frame.setBackground(new Color(0,0,0, 0));
-        frame.setUndecorated(true);
         setBackground(new Color(0,0,0,0));
 
         // Loading config if config file exist
@@ -325,10 +341,24 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             // Setting spotify token OPS this token can only be used to read the current playing this have no control over what's playing
             if(config.has("token")) {
                 // A saved token was found
-                spotifyApi.setRefreshToken(config.getString("token"));
+                char[] raw_token = config.getString("token").toCharArray();
+                char[] token = new char[raw_token.length];
+
+
+                for(int i = 0; i < raw_token.length; i++){
+                    token[i] = (char) (raw_token[i]/2);
+                }
+
+                spotifyApi.setRefreshToken(String.valueOf(token));
             }else {
                 // A saved token was not found, starting a token grabber
                 GrabSpotifyToken();
+            }
+
+            if(config.has("cashFolder")){
+                cacheFolder = new File(config.getString("catchFolder"));
+            }else{
+                cacheFolder = new File(dataFolder,"catch");
             }
 
             // Chaging the frame size to the config settings
@@ -338,6 +368,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             frame.setAlwaysOnTop(alwaysOnTop);
         }else{
             config = new JSONObject();
+            cacheFolder = new File(dataFolder,"catch");
             // A saved token was not found, starting a token grabber
             GrabSpotifyToken();
         }
@@ -386,16 +417,25 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
         // Checking if the directory for spotify album cover exist, else creating it and the size subdirectories
         // This is used to seed up icon loading on slower networks but may take up more space
-        if(!iconCatch.exists()){
-            iconCatch.mkdir();
-            new File(iconCatch,"small").mkdir();
-            new File(iconCatch,"medium").mkdir();
-            new File(iconCatch,"large").mkdir();
+        if(!cacheFolder.exists()){
+            cacheFolder.mkdir();
+            new File(cacheFolder,"small").mkdir();
+            new File(cacheFolder,"medium").mkdir();
+            new File(cacheFolder,"large").mkdir();
         }
 
         // Creating a Shutdown hook for when the program is exited to save all config and the spotify refresh token to config file
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             try {
+
+                char[] str = spotifyApi.getRefreshToken().toCharArray();
+                char[] token = new char[str.length];
+
+
+                for(int i = 0; i < str.length; i++){
+                    token[i] = (char) (str[i]*2);
+                }
+
                 config.put("x", frame.getX());
                 config.put("y", frame.getY());
                 config.put("darkMode", darkMode);
@@ -403,10 +443,12 @@ public class Main extends JPanel implements MouseListener, KeyListener {
                 config.put("sizeMode", sizeMode);
                 config.put("alwaysOnTop", alwaysOnTop);
                 config.put("cacheIcons", cacheIcons);
-                config.put("token", spotifyApi.getRefreshToken());
+                config.put("token", String.valueOf(token));
                 config.put("fadeIcon", fadeIcon);
                 config.put("fadeComplete", fadeComplete);
                 config.put("fadeStart", fadeStart);
+                config.put("cashPath", cacheFolder.toString());
+
                 if (!configFile.exists()) {
                     configFile.createNewFile();
                 }
@@ -484,23 +526,30 @@ public class Main extends JPanel implements MouseListener, KeyListener {
      * @throws IOException
      */
     public BufferedImage getIcon() throws IOException {
-        String name = currentPlayingJson.getJSONObject("item").getJSONObject("album").getString("uri");
-        File img = new File(iconCatch, sizeMode.getIconSizeName() + "/" + name.replaceAll(":", "_")+".AC");
-        if(!online)
-            return offlineIcon;
-        if (img.exists()) {
-            return sizeMode.changeIcon(ImageIO.read(img));
-        } else if(cacheIcons) {
-            BufferedImage icon = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(sizeMode.getIconSize()).getString("url")));
-            ImageIO.write(icon, "PNG", new FileOutputStream(img));
-            return sizeMode.changeIcon(icon);
-        }
-        else {
-            BufferedImage[] icons = new BufferedImage[3];
-            icons[0] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(0).getString("url")));
-            icons[1] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(1).getString("url")));
-            icons[2] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(2).getString("url")));
-            return sizeMode.changeIcon(icons[sizeMode.getIconSize()]);
+        if(currentPlayingJson.get("item") != null) {
+            Object obj = currentPlayingJson.getJSONObject("item").getJSONObject("album").get("uri");
+            if (obj instanceof String name) {
+                File img = new File(cacheFolder, sizeMode.getIconSizeName() + "/" + name.replaceAll(":", "_") + ".AC");
+                if (!online)
+                    return offlineIcon;
+                if (img.exists()) {
+                    return sizeMode.changeIcon(ImageIO.read(img));
+                } else if (cacheIcons) {
+                    BufferedImage icon = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(sizeMode.getIconSize()).getString("url")));
+                    ImageIO.write(icon, "PNG", new FileOutputStream(img));
+                    return sizeMode.changeIcon(icon);
+                } else {
+                    BufferedImage[] icons = new BufferedImage[3];
+                    icons[0] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(0).getString("url")));
+                    icons[1] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(1).getString("url")));
+                    icons[2] = ImageIO.read(new URL(currentPlayingJson.getJSONObject("item").getJSONObject("album").getJSONArray("images").getJSONObject(2).getString("url")));
+                    return sizeMode.changeIcon(icons[sizeMode.getIconSize()]);
+                }
+            } else {
+                return iconNotFound;
+            }
+        }else{
+            return iconNotFound;
         }
     }
 
@@ -590,7 +639,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             cacheIconsSwitch = new Rectangle(getWidth()-42,localSettingsY-20,40,20);
             localSettingsY += 22;
             cacheClearButton = new Button(() -> {
-                File[] folders = iconCatch.listFiles();
+                File[] folders = cacheFolder.listFiles();
                 if(folders == null) return;
                 for(File folder : folders){
                     File[] icons = folder.listFiles();
@@ -604,6 +653,20 @@ public class Main extends JPanel implements MouseListener, KeyListener {
                     }
                 }
             }, getWidth()-42,localSettingsY-20,40,21, "clearCache");
+            localSettingsY += 22;
+            cacheFileButton = new Button(() -> {
+                JFileChooser chooser = new JFileChooser();
+                chooser.setDialogTitle("Select cache folder");
+                chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+                chooser.setAcceptAllFileFilterUsed(false);
+                chooser.setCurrentDirectory(cacheFolder);
+                int option = chooser.showOpenDialog(frame);
+
+                if(option == JFileChooser.APPROVE_OPTION){
+                    cacheFolder = chooser.getSelectedFile();
+                }
+
+            }, getWidth()-42, localSettingsY-20, 40,21, "clearCache");
             localSettingsY += 22;
             fadeIconSwitch = new Rectangle(getWidth()-42,localSettingsY-20,40,20);
             localSettingsY += 22;
@@ -678,10 +741,10 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             if(sizeMode == SizeMode.NORMAL) {
                 printNameAndPlaying(g, color, invert, getWidth() - (300 + (currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play).length + 5),true);
 
-                int totalTime = item.getInt("duration_ms");
+                int totalTime = item==null? (int) baseTime.getTimeInMilliseconds() :item.getInt("duration_ms");
                 int v = (int) (((currentPlayingJson.getInt("progress_ms") + 0.0) / totalTime) * 200);
                 Time t = new Time(currentPlayingJson.getInt("progress_ms"));
-                Time total = new Time(item.getInt("duration_ms"));
+                Time total = new Time(totalTime);
 
                 String sec = (t.getSec() > 9 ? t.getSec() + "" : "0" + t.getSec());
                 int min = t.getMin();
@@ -734,10 +797,10 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
                 printNameAndPlaying(g, color, invert, getWidth() - (((currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play).length + 5)+100),false);
 
-                int totalTime = item.getInt("duration_ms");
+                int totalTime = item==null? (int) baseTime.getTimeInMilliseconds() :item.getInt("duration_ms");
                 int v = (int) (((currentPlayingJson.getInt("progress_ms") + 0.0) / totalTime) * 200);
                 Time t = new Time(currentPlayingJson.getInt("progress_ms"));
-                Time total = new Time(item.getInt("duration_ms"));
+                Time total = new Time(totalTime);
 
                 String sec = (t.getSec() > 9 ? t.getSec() + "" : "0" + t.getSec());
                 int min = t.getMin();
@@ -769,10 +832,10 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
                 printNameAndPlaying(g, color, invert, getWidth() - ((currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play).length + 5)-76,false);
 
-                int totalTime = item.getInt("duration_ms");
+                int totalTime = item==null? (int) baseTime.getTimeInMilliseconds() :item.getInt("duration_ms");
                 int v = (int) (((currentPlayingJson.getInt("progress_ms") + 0.0) / totalTime) * 200);
                 Time t = new Time(currentPlayingJson.getInt("progress_ms"));
-                Time total = new Time(item.getInt("duration_ms"));
+                Time total = new Time(totalTime);
 
                 String sec = (t.getSec() > 9 ? t.getSec() + "" : "0" + t.getSec());
                 int min = t.getMin();
@@ -797,10 +860,10 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             else if(sizeMode == SizeMode.EXTRA_LARGE){
                 printNameAndPlaying(g, color, invert, getWidth() - (300 + (currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play).length + 5),true);
 
-                int totalTime = item.getInt("duration_ms");
+                int totalTime = item==null? (int) baseTime.getTimeInMilliseconds() :item.getInt("duration_ms");
                 int v = (int) (((currentPlayingJson.getInt("progress_ms") + 0.0) / totalTime) * 200);
                 Time t = new Time(currentPlayingJson.getInt("progress_ms"));
-                Time total = new Time(item.getInt("duration_ms"));
+                Time total = new Time(totalTime);
 
                 String sec = (t.getSec() > 9 ? t.getSec() + "" : "0" + t.getSec());
                 int min = t.getMin();
@@ -841,42 +904,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
                     g.drawImage(icon, getWidth() - 640, 0, null);
                 }
             }
-            /*else if(sizeMode == SizeMode.MINI){
-                if (icon != null && showIcon){
-                    g.drawImage(icon, getWidth() - 300, 0, null);
-                    g.setColor(new Color(0,0,0, 178));
-                    g.fillRect(0,0,getWidth(),35);
-                    g.setColor(invert);
-                }
-
-
-                printNameAndPlaying(g, color, invert, getWidth() - ((currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play).length + 5)-76,false);
-
-                int totalTime = item.getInt("duration_ms");
-                int v = (int) (((currentPlayingJson.getInt("progress_ms") + 0.0) / totalTime) * 200);
-                Time t = new Time(currentPlayingJson.getInt("progress_ms"));
-                Time total = new Time(item.getInt("duration_ms"));
-
-                String sec = (t.getSec() > 9 ? t.getSec() + "" : "0" + t.getSec());
-                int min = t.getMin();
-                String totalSec = (total.getSec() > 9 ? total.getSec() + "" : "0" + total.getSec());
-                int totalMin = total.getMin();
-                //g2d.drawRect(g2d.getFontMetrics().stringWidth(min + ":" + sec) + 3, 24, 100, 10);
-                //g2d.fillRect(g2d.getFontMetrics().stringWidth(min + ":" + sec) + 3, 24, v, 10);
-
-                Stroke stroke = g.getStroke();
-
-                g.setColor(new ColorUIResource(84, 84, 84));
-                g.setStroke(new BasicStroke(5, BasicStroke.CAP_ROUND, BasicStroke.JOIN_MITER));
-                int width = g.getFontMetrics().stringWidth(min + ":" + sec);
-                g.drawLine(width + 6, 29, width + 6 + 200, 29);
-
-                g.setColor(invert);
-                g.drawLine(width + 6, 29, width + 6 + v, 29);
-
-                g.drawString(min + ":" + sec, 0, 33);
-                g.drawString(totalMin + ":" + totalSec, g.getFontMetrics().stringWidth(min + ":" + sec) + 212, 33);
-            }*/
         }
         else if(settingMenu){
 
@@ -906,7 +933,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
             int width = g.getFontMetrics().stringWidth(sizeMode.getName())/2;
 
-//getWidth()-maxSizeModeWidth/2-width/2
             g.drawString(sizeMode.getName(), getWidth()-width-(maxSizeModeWidth/2)-28, settingsY);
 
 
@@ -928,7 +954,12 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             settingsY+=22;
 
             g.drawString("Clear Cache",0,settingsY);
-            cacheClearButton.draw(g, invert);
+            cacheClearButton.draw(g, g.getColor());
+
+            settingsY += 22;
+
+            g.drawString("Cash file location", 0, settingsY);
+            cacheFileButton.draw(g, g.getColor());
 
             settingsY += 22;
 
@@ -944,7 +975,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
             g.drawString("Fade complete time",0,settingsY);
             fadeCompleteTime.draw(g);
-
         }
         else{
             g.setColor(Color.black);
@@ -966,7 +996,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
         g.setColor(c);
 
-        //g2d.setColor(Color.white);
         g.setStroke(new BasicStroke(3));
 
         if(close == null) return;
@@ -974,7 +1003,6 @@ public class Main extends JPanel implements MouseListener, KeyListener {
         g.drawLine(close.x, close.y, (int) (close.x + close.getWidth()), (int) (close.y + close.getHeight()));
         g.drawLine((int) (close.x + close.getWidth()), close.y, close.x, (int) (close.y + close.getHeight()));
 
-        //if(sizeMode == SizeMode.MINI)
         g.drawLine(minimise.x,minimise.y+minimise.height/2,minimise.width+minimise.x,minimise.y+minimise.height/2);
         drawScaleBitMap(g, SettingsIcon, settings.x, settings.y, c);
 
@@ -1027,7 +1055,11 @@ public class Main extends JPanel implements MouseListener, KeyListener {
     private void printNameAndPlaying(Graphics2D g2d, Color color, Color invert, int maxWidth, boolean fillUnderIcon) {
         g2d.setFont(new Font(g2d.getFont().getName(), Font.PLAIN, 20));
 
-        String name = currentPlayingJson.getJSONObject("item").getString("name").toUpperCase(Locale.ROOT);
+        String name = "Song name not found";
+
+        if(!currentPlayingJson.get("item").equals(null)) {
+            name = currentPlayingJson.getJSONObject("item").getString("name").toUpperCase(Locale.ROOT);
+        }
         String spacing = " ".repeat(3);
         boolean[][] is_playings = currentPlayingJson.getBoolean("is_playing") ? Icons.pause : Icons.play;
         if (g2d.getFontMetrics().stringWidth(name) > maxWidth) {
@@ -1222,6 +1254,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             }
 
             cacheClearButton.press(e.getPoint());
+            cacheFileButton.press(e.getPoint());
         }else if(reload.contains(e.getPoint()) && online){
             puase = true;
             Time time = new Time();
@@ -1261,6 +1294,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
             frameMove = false;
         }
         cacheClearButton.release(e.getPoint());
+        cacheFileButton.release(e.getPoint());
     }
     @Override
     public void mouseEntered(MouseEvent e) {
@@ -1283,7 +1317,7 @@ public class Main extends JPanel implements MouseListener, KeyListener {
 
     @Override
     public void keyReleased(KeyEvent e) {
-        fadeStartTime.type(e.getKeyCode());
-        fadeCompleteTime.type(e.getKeyCode());
+        //fadeStartTime.type(e.getKeyCode());
+        //fadeCompleteTime.type(e.getKeyCode());
     }
 }
